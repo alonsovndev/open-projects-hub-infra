@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euxo pipefail
+
+dnf install -y docker
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}}
+JSON
+systemctl enable --now docker
+
+plugin_dir=/usr/local/lib/docker/cli-plugins
+release_url="https://github.com/docker/compose/releases/download/${compose_version}"
+mkdir -p "$plugin_dir"
+curl -fsSL -o "$plugin_dir/docker-compose" "$release_url/docker-compose-linux-x86_64"
+curl -fsSL -o /tmp/docker-compose.sha256 "$release_url/docker-compose-linux-x86_64.sha256"
+echo "$(cut -d' ' -f1 /tmp/docker-compose.sha256)  $plugin_dir/docker-compose" | sha256sum -c -
+chmod +x "$plugin_dir/docker-compose"
+
+# 1 GB of RAM is not enough for gunicorn + Postgres at peak without swap.
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+mkdir -p /opt/ophub
+chmod 750 /opt/ophub
