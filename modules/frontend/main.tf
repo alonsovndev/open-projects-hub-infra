@@ -10,8 +10,10 @@ data "aws_cloudfront_response_headers_policy" "security_headers" {
   name = "Managed-SecurityHeadersPolicy"
 }
 
-data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
-  name = "Managed-AllViewerExceptHostHeader"
+# Forwards all viewer headers and cookies plus CloudFront-Viewer-Address, which Caddy turns
+# into X-Forwarded-For so the API rate-limits per user instead of per CloudFront edge.
+data "aws_cloudfront_origin_request_policy" "all_viewer_and_cloudfront_headers" {
+  name = "Managed-AllViewerAndCloudFrontHeaders-2022-06"
 }
 
 resource "aws_s3_bucket" "web" {
@@ -120,7 +122,7 @@ resource "aws_cloudfront_distribution" "this" {
     cached_methods           = ["GET", "HEAD"]
     compress                 = true
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_and_cloudfront_headers.id
   }
 
   restrictions {

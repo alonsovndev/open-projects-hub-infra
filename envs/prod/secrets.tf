@@ -25,7 +25,14 @@ locals {
     API_KEY_ENCRYPTION_KEY = random_bytes.api_key_encryption.base64
   }
 
-  manual_secrets = ["SMTP_PASSWORD", "GEMINI_API_KEY", "SENTRY_DSN"]
+  manual_secrets = [
+    "SMTP_HOST",
+    "SMTP_USERNAME",
+    "SMTP_PASSWORD",
+    "SMTP_FROM_ADDRESS",
+    "GEMINI_API_KEY",
+    "SENTRY_DSN",
+  ]
 }
 
 resource "aws_ssm_parameter" "generated" {
