@@ -14,10 +14,10 @@ Browser -> CloudFront (*.cloudfront.net, HTTPS)
 
 ## Status (2026-10-10)
 
-- **Done:** state bucket applied (the only resource in AWS so far); production stack written, validated and planned (40 resources); CI validates formatting and syntax on pull requests; pull requests are open in this repository and in the API, web and docs repositories.
-- **Not done:** `terraform apply` for `envs/prod`. Creating CloudFront on this new account and the host's first boot are untested.
-- **Next:** merge the pull requests, apply `envs/prod`, then work through the [first release checklist](#first-release-checklist) at the end of this file, tag the API and then the web app, seed the admin user and smoke test (log in as the admin, create a project).
-- **Open:** a sending domain for email (new users cannot verify without one); the AWS account creation date and the end of the Free Plan window (TBD).
+- **Done:** state bucket applied (the only resource in AWS so far); production stack written, validated and planned (40 resources); CI validates formatting and syntax on pull requests; the pull requests in this repository and in the API, web and docs repositories are merged into `dev`.
+- **Not done:** `terraform apply` for `envs/prod`. Creating the CloudFront distribution on this account and the host's first boot are untested.
+- **Next:** apply `envs/prod` after a fresh plan, then work through the [first release checklist](#first-release-checklist) at the end of this file, tag the API and then the web app, seed the admin user and smoke test (log in as the admin, create a project).
+- **Open:** a sending domain for email (new users cannot verify without one).
 
 ## Layout
 
@@ -49,7 +49,9 @@ Without working SMTP the API cannot send sign-up verification codes, so new self
 
 ## Free Plan limits
 
-The Free Plan lasts at most 6 months or until the credits run out, then the account closes and the data is gone.
+The account is on the Free Plan with $100 in credits and 183 days remaining as of 2026-10-10, so the plan ends around 2027-04-11 or when the credits run out, whichever comes first. Then the account closes and the data is gone unless the plan is upgraded.
+
+The design costs about $12.85/month, so about $52 for the four months until the review and about $77 for the whole window. The gross-usage budget (alert at $16 in a month) makes credit burn visible.
 
 There are no database backups by design (low-stakes review deployment): Postgres data lives only on the EC2 root volume. Termination protection and `prevent_destroy` on the instance guard against accidental loss; if you ever need a copy, run `pg_dump` by hand over SSM Session Manager.
 
