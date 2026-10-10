@@ -12,6 +12,13 @@ Browser -> CloudFront (*.cloudfront.net, HTTPS)
 - The EC2 host has no SSH; use SSM Session Manager. Its security group only accepts HTTP from CloudFront.
 - Deploys come from the app repos via GitHub Actions OIDC roles (no long-lived keys).
 
+## Status (2026-10-10)
+
+- **Done:** state bucket applied (the only resource in AWS so far); production stack written, validated and planned (40 resources); CI validates formatting and syntax on pull requests; pull requests are open in this repository and in the API, web and docs repositories.
+- **Not done:** `terraform apply` for `envs/prod`. Creating CloudFront on this new account and the host's first boot are untested.
+- **Next:** merge the pull requests, apply `envs/prod`, then work through the [first release checklist](#first-release-checklist) at the end of this file, tag the API and then the web app, seed the admin user and smoke test (log in as the admin, create a project).
+- **Open:** a sending domain for email (new users cannot verify without one); the AWS account creation date and the end of the Free Plan window (TBD).
+
 ## Layout
 
 | Path | Purpose |
