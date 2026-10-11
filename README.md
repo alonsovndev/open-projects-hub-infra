@@ -23,17 +23,17 @@ Browser -> CloudFront (*.cloudfront.net, HTTPS)
 
 | Path | Purpose |
 | --- | --- |
-| `bootstrap/` | One-time S3 bucket for Terraform state (local state, not committed) |
+| `bootstrap/` | Applied by hand (local state, not committed): the S3 state bucket, the GitHub OIDC provider and the role the destroy workflow assumes |
 | `envs/prod/` | Production stack: wires the modules, budgets, SSM parameters |
 | `modules/compute` | EC2, Elastic IP, security group, instance role, bootstrap `user_data` |
 | `modules/frontend` | S3 + CloudFront (web and `/v1/*` API behaviors) |
-| `modules/github-oidc` | GitHub OIDC provider and the API/web deploy roles |
+| `modules/github-oidc` | The API/web deploy roles and the SSM deploy document (the OIDC provider itself is in `bootstrap/`) |
 
 ## Apply order
 
 Requires Terraform >= 1.10 and AWS credentials for the target account.
 
-1. `cd bootstrap && terraform init && terraform apply` (once per account).
+1. `cd bootstrap && terraform init && terraform apply` (once per account; run it again whenever `bootstrap/` changes. It must be applied before `envs/prod`, which looks up the GitHub OIDC provider created here).
 2. `cd envs/prod && cp terraform.tfvars.example terraform.tfvars` and set `alert_email`.
 3. `terraform init && terraform plan -out=tfplan`, review, then `terraform apply tfplan`. Delete `tfplan` afterwards; it contains generated secrets.
 
@@ -53,7 +53,7 @@ The account is on the Free Plan with $100 in credits and 183 days remaining as o
 
 The design costs about $12.85/month, so about $52 for the four months until the review and about $77 for the whole window. The gross-usage budget (alert at $16 in a month) makes credit burn visible.
 
-There are no database backups by design (low-stakes review deployment): Postgres data lives only on the EC2 root volume. Termination protection and `prevent_destroy` on the instance guard against accidental loss; if you ever need a copy, run `pg_dump` by hand over SSM Session Manager.
+There are no database backups by design (low-stakes review deployment): Postgres data lives only on the EC2 root volume. `prevent_destroy` and EC2 termination protection on the instance guard against accidental loss (a plan that deletes or replaces it fails); if you ever need a copy, run `pg_dump` by hand over SSM Session Manager.
 
 ## First release checklist
 
@@ -61,11 +61,12 @@ Manual steps that no workflow does for you:
 
 1. `terraform apply` for `envs/prod`, then check the host's first boot over SSM Session Manager: `cloud-init status` (the setup script never re-runs).
 2. Set the repository variables from `terraform output`:
-   - API repo: `AWS_ROLE_ARN` (`api_deploy_role_arn`), `AWS_REGION`, `API_INSTANCE_ID` (`api_instance_id`).
-   - Web repo: `AWS_ROLE_ARN` (`web_deploy_role_arn`), `AWS_REGION`, `WEB_BUCKET` (`web_bucket_name`), `DISTRIBUTION_ID` (`cloudfront_distribution_id`).
+   - API repo: `AWS_ROLE_ARN` (`api_deploy_role_arn`), `AWS_REGION`, `API_INSTANCE_ID` (`api_instance_id`), `SITE_URL` (`cloudfront_url`).
+   - Web repo: `AWS_ROLE_ARN` (`web_deploy_role_arn`), `AWS_REGION`, `WEB_BUCKET` (`web_bucket_name`), `DISTRIBUTION_ID` (`cloudfront_distribution_id`), `SITE_URL` (`cloudfront_url`).
+   - Both deploy workflows end with a smoke test through `SITE_URL` and fail if it is empty. They also refuse a tag whose commit is not on `main`.
 3. Add tag protection (rulesets) for `v*` on the API, web and infra repositories. The deploy roles trust any `v*` tag, so whoever can push a tag can deploy as root on the host.
 4. Set any SSM placeholders you need (see Secrets).
-5. Push the API tag first (`vX.Y.Z`). After the image is pushed, set the GHCR package `open-projects-hub-api` to **Public** (GitHub profile > Packages > Package settings), then re-run the failed deploy from the tag. The host pulls without credentials.
+5. Push the API tag first (`vX.Y.Z`). After the image is pushed, the deploy job stops at its "publicly pullable image" check. Set the GHCR package `open-projects-hub-api` to **Public** (GitHub profile > Packages > Package settings), then re-run the failed job from the tag. The host pulls without credentials.
 6. Push the web tag.
 7. Seed the admin once over SSM (`ADMIN_PASSWORD` needs a letter and a digit):
    `cd /opt/ophub && docker compose -f compose.prod.yml --profile seed run --rm -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='...' seed-admin`
@@ -74,4 +75,21 @@ Operational notes:
 
 - Never delete and re-push a release tag: `raw.githubusercontent.com` caches files for several minutes, so a re-pushed tag can deploy stale files. Cut a new patch version instead.
 - After rotating `ORIGIN_VERIFY` with Terraform, run an API deploy: CloudFront changes immediately but the host's `.env` only updates on deploy, so `/v1/*` returns 403 in between.
-- To tear down, remove `prevent_destroy` and `disable_api_termination` from `modules/compute/main.tf`, apply, then destroy.
+
+## Destroy
+
+Pushing the tag `destroy-prod` runs `.github/workflows/destroy.yml`, which removes everything in `envs/prod` (CloudFront, the web bucket, the EC2 host **with its Postgres data**, SSM parameters, deploy roles, budgets). There are no backups, so run `pg_dump` over SSM first if you want the data. The state bucket and the destroy role in `bootstrap/` stay, so `envs/prod` can be applied again later.
+
+One-time setup (the workflow cannot run without it), in this order:
+
+1. Create the GitHub Environment `destroy` (Settings > Environments) with **required reviewers** and a deployment rule that only allows the tag `destroy-prod`. Do this before step 2: the role trusts the environment by name, and GitHub creates a missing environment unprotected the first time a workflow names it.
+2. Apply `bootstrap/` (creates the GitHub OIDC provider and the role `ophub-terraform-destroy`), then set the repository variable `DESTROY_ROLE_ARN` to the `destroy_role_arn` output.
+3. Add tag protection for `destroy-*`, like `v*`.
+
+These GitHub settings are the real security boundary. The "commit is on `main`" check inside the workflow files only prevents mistakes: whoever can push a tag can also push a commit that edits the workflow. You are the only reviewer, so the approval is a deliberate pause, not a second pair of eyes; the plan is printed in the job log after you approve.
+
+To run it: `git tag destroy-prod && git push origin destroy-prod` from a commit on `main`, then approve the run. To run it again, delete the tag first (`git push origin :refs/tags/destroy-prod`). The workflow removes the `prevent_destroy` line from its throwaway checkout, turns off the instance's termination protection with the AWS CLI, destroys, and fails if any resource is left in state. A partial failure is safe to re-run. The SSM parameters you set by hand (SMTP, Gemini, Sentry) are deleted too, and GHCR images are not touched. After a later `apply`, the repository variables (`API_INSTANCE_ID`, `DISTRIBUTION_ID`, `WEB_BUCKET`, `SITE_URL`, the role ARNs) must be set again from `terraform output`, because the IDs change.
+
+The destroy role's policy was written without running it: the first real destroy may stop on a missing permission. Add the action to `bootstrap/main.tf`, apply, and re-run.
+
+To destroy by hand instead: remove `prevent_destroy` from `modules/compute/main.tf`, run `aws ec2 modify-instance-attribute --no-disable-api-termination --instance-id <id>`, then `terraform destroy` in `envs/prod`.
