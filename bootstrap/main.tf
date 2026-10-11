@@ -15,6 +15,18 @@ variable "region" {
   default     = "us-east-1"
 }
 
+variable "github_owner" {
+  description = "GitHub user or organization that owns the infrastructure repository."
+  type        = string
+  default     = "alonsovndev"
+}
+
+variable "infra_repo" {
+  description = "Infrastructure repository whose destroy workflow assumes the destroy role."
+  type        = string
+  default     = "open-projects-hub-infra"
+}
+
 provider "aws" {
   region = var.region
 
@@ -113,7 +125,214 @@ resource "aws_s3_bucket_policy" "state" {
   depends_on = [aws_s3_bucket_public_access_block.state]
 }
 
+# Account-wide singleton. It lives here, not in envs/prod, so the destroy role keeps working
+# after envs/prod is destroyed; envs/prod only looks it up.
+resource "aws_iam_openid_connect_provider" "github" {
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+}
+
+# Role for .github/workflows/destroy.yml. It lives in bootstrap/ so destroying envs/prod cannot
+# delete the role that is running the destroy. Only the "destroy" GitHub Environment (required
+# reviewer) can assume it, and its policy can read, modify and delete envs/prod resources but
+# never create them.
+data "aws_iam_policy_document" "destroy_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.github_owner}/${var.infra_repo}:environment:destroy"]
+    }
+  }
+}
+
+resource "aws_iam_role" "terraform_destroy" {
+  name                 = "ophub-terraform-destroy"
+  assume_role_policy   = data.aws_iam_policy_document.destroy_trust.json
+  max_session_duration = 7200 # a CloudFront distribution takes up to 30 minutes to delete
+}
+
+data "aws_iam_policy_document" "terraform_destroy" {
+  statement {
+    sid       = "StateBucketList"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.state.arn]
+  }
+
+  statement {
+    sid       = "ProdStateAndLock"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.state.arn}/prod/*"]
+  }
+
+  statement {
+    sid       = "Ec2ReadAndDelete"
+    actions   = ["ec2:Describe*", "ec2:Get*"]
+    resources = ["*"]
+  }
+
+  # Limited to the instance this stack tags (provider default_tags).
+  statement {
+    sid       = "Ec2ProdInstance"
+    actions   = ["ec2:ModifyInstanceAttribute", "ec2:TerminateInstances"]
+    resources = ["arn:aws:ec2:*:${data.aws_caller_identity.current.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/environment"
+      values   = ["prod"]
+    }
+  }
+
+  statement {
+    sid = "Ec2Delete"
+    actions = [
+      "ec2:DisassociateAddress",
+      "ec2:ReleaseAddress",
+      "ec2:RevokeSecurityGroupIngress",
+      "ec2:RevokeSecurityGroupEgress",
+      "ec2:DeleteSecurityGroup",
+      "ec2:DeleteTags",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "CloudFrontReadAndDelete"
+    actions = [
+      "cloudfront:Get*",
+      "cloudfront:List*",
+      "cloudfront:Describe*",
+      "cloudfront:UpdateDistribution",
+      "cloudfront:DeleteDistribution",
+      "cloudfront:DeleteOriginAccessControl",
+      "cloudfront:DeleteFunction",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "IamProdRolesAndProfile"
+    actions = [
+      "iam:Get*",
+      "iam:List*",
+      "iam:DeleteRole",
+      "iam:DeleteRolePolicy",
+      "iam:DetachRolePolicy",
+      "iam:RemoveRoleFromInstanceProfile",
+      "iam:DeleteInstanceProfile",
+    ]
+    resources = [
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/ophub-prod-*",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:instance-profile/ophub-prod-*",
+    ]
+  }
+
+  # The prod module finds the provider by URL, which lists all providers and reads each one.
+  statement {
+    sid       = "IamReadOidcProviders"
+    actions   = ["iam:GetOpenIDConnectProvider"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/*"]
+  }
+
+  statement {
+    sid       = "IamListProviders"
+    actions   = ["iam:ListOpenIDConnectProviders"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "WebBucketReadAndDelete"
+    actions = [
+      "s3:Get*",
+      "s3:List*",
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+      "s3:DeleteBucket",
+      "s3:DeleteBucketPolicy",
+      "s3:PutBucketPublicAccessBlock",
+      "s3:PutEncryptionConfiguration",
+    ]
+    resources = [
+      "arn:aws:s3:::ophub-prod-web-*",
+      "arn:aws:s3:::ophub-prod-web-*/*",
+    ]
+  }
+
+  statement {
+    sid = "SsmParametersReadAndDelete"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+      "ssm:ListTagsForResource",
+      "ssm:DeleteParameter",
+      "ssm:DeleteParameters",
+    ]
+    resources = ["arn:aws:ssm:*:${data.aws_caller_identity.current.account_id}:parameter/ophub/prod/*"]
+  }
+
+  statement {
+    sid       = "SsmDescribeParameters"
+    actions   = ["ssm:DescribeParameters"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "SsmPublicAmiParameter"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:*::parameter/aws/service/ami-amazon-linux-latest/*"]
+  }
+
+  statement {
+    sid = "SsmDeployDocument"
+    actions = [
+      "ssm:DescribeDocument",
+      "ssm:GetDocument",
+      "ssm:DescribeDocumentPermission",
+      "ssm:ListTagsForResource",
+      "ssm:DeleteDocument",
+    ]
+    resources = ["arn:aws:ssm:*:${data.aws_caller_identity.current.account_id}:document/ophub-prod-*"]
+  }
+
+  statement {
+    sid = "BudgetsReadAndDelete"
+    actions = [
+      "budgets:ViewBudget",
+      "budgets:DescribeBudgetActionsForBudget",
+      "budgets:ListTagsForResource",
+      "budgets:DeleteBudget",
+    ]
+    resources = ["arn:aws:budgets::${data.aws_caller_identity.current.account_id}:budget/ophub-prod-*"]
+  }
+}
+
+resource "aws_iam_role_policy" "terraform_destroy" {
+  name   = "destroy-envs-prod"
+  role   = aws_iam_role.terraform_destroy.id
+  policy = data.aws_iam_policy_document.terraform_destroy.json
+}
+
 output "state_bucket_name" {
   description = "Bucket name to use in envs/*/backend.tf."
   value       = aws_s3_bucket.state.id
+}
+
+output "destroy_role_arn" {
+  description = "Value for the DESTROY_ROLE_ARN repository variable of the infrastructure repository."
+  value       = aws_iam_role.terraform_destroy.arn
 }
