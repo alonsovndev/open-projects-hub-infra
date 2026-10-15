@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 5.0"
+    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
@@ -24,3 +28,6 @@ provider "aws" {
     }
   }
 }
+
+# The API token comes from the CLOUDFLARE_API_TOKEN environment variable.
+provider "cloudflare" {}

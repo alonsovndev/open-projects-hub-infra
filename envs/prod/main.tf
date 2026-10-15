@@ -1,10 +1,9 @@
-data "aws_caller_identity" "current" {}
-
 locals {
   name                 = "ophub-prod"
-  account_id           = data.aws_caller_identity.current.account_id
   ssm_parameter_prefix = "/ophub/prod"
 }
+
+data "cloudflare_ip_ranges" "edge" {}
 
 module "compute" {
   source = "../../modules/compute"
@@ -12,15 +11,18 @@ module "compute" {
   name                 = local.name
   instance_type        = var.instance_type
   ssm_parameter_prefix = local.ssm_parameter_prefix
+  edge_ipv4_cidrs      = data.cloudflare_ip_ranges.edge.ipv4_cidrs
 }
 
-module "frontend" {
-  source = "../../modules/frontend"
-
-  name                   = local.name
-  web_bucket_name        = "${local.name}-web-${local.account_id}"
-  api_origin_domain_name = module.compute.origin_domain_name
-  origin_verify_secret   = random_password.origin_verify.result
+# Proxied: Cloudflare terminates the public TLS and is the only client the security group admits.
+resource "cloudflare_dns_record" "api" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.api_hostname
+  type    = "A"
+  content = module.compute.public_ip
+  ttl     = 1 # automatic, required when proxied
+  proxied = true
+  comment = "Open Projects Hub API (managed by Terraform)"
 }
 
 module "github_oidc" {
@@ -29,10 +31,7 @@ module "github_oidc" {
   name             = local.name
   github_owner     = var.github_owner
   api_repo         = var.api_repo
-  web_repo         = var.web_repo
   api_instance_arn = module.compute.instance_arn
-  web_bucket_arn   = module.frontend.web_bucket_arn
-  distribution_arn = module.frontend.distribution_arn
 }
 
 resource "aws_budgets_budget" "cash_spend" {

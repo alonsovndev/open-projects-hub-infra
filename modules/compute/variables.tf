@@ -25,3 +25,13 @@ variable "compose_version" {
   type        = string
   default     = "v2.29.7"
 }
+
+variable "edge_ipv4_cidrs" {
+  description = "IPv4 ranges allowed to reach HTTPS on the host (Cloudflare's edge)."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.edge_ipv4_cidrs) > 0 && length(var.edge_ipv4_cidrs) <= 20
+    error_message = "Provide 1 to 20 CIDR blocks (the prefix list holds at most 20)."
+  }
+}

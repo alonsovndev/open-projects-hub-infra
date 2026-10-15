@@ -9,11 +9,6 @@ resource "random_password" "postgres" {
   special = false
 }
 
-resource "random_password" "origin_verify" {
-  length  = 40
-  special = false
-}
-
 resource "random_bytes" "api_key_encryption" {
   length = 32
 }
@@ -48,14 +43,6 @@ resource "aws_ssm_parameter" "generated" {
   }
 }
 
-# No ignore_changes: CloudFront sends random_password.origin_verify directly, so
-# a rotation must reach the proxy through this parameter or /v1/* gets rejected.
-resource "aws_ssm_parameter" "origin_verify" {
-  name  = "${local.ssm_parameter_prefix}/ORIGIN_VERIFY"
-  type  = "SecureString"
-  value = random_password.origin_verify.result
-}
-
 # Real values are set by hand (aws ssm put-parameter --overwrite); the app
 # treats "N/A" as unset.
 resource "aws_ssm_parameter" "manual" {
@@ -70,14 +57,27 @@ resource "aws_ssm_parameter" "manual" {
   }
 }
 
+resource "aws_ssm_parameter" "api_host" {
+  name  = "${local.ssm_parameter_prefix}/API_HOST"
+  type  = "String"
+  value = var.api_hostname
+}
+
 resource "aws_ssm_parameter" "frontend_base_url" {
   name  = "${local.ssm_parameter_prefix}/FRONTEND_BASE_URL"
   type  = "String"
-  value = "https://${module.frontend.domain_name}"
+  value = var.frontend_origin
 }
 
 resource "aws_ssm_parameter" "cors_origins" {
   name  = "${local.ssm_parameter_prefix}/CORS_ORIGINS"
   type  = "String"
-  value = "https://${module.frontend.domain_name}"
+  value = var.frontend_origin
+}
+
+# The web app lives on another origin, so the browser session cookie needs credentialed CORS.
+resource "aws_ssm_parameter" "cors_allow_credentials" {
+  name  = "${local.ssm_parameter_prefix}/CORS_ALLOW_CREDENTIALS"
+  type  = "String"
+  value = "true"
 }

@@ -1,1 +1,4 @@
-alert_email = "you@example.com"
+alert_email        = "you@example.com"
+cloudflare_zone_id = "00000000000000000000000000000000"
+api_hostname       = "api-oph.example.com"
+frontend_origin    = "https://oph.example.com"
