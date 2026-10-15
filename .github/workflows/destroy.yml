@@ -1,7 +1,8 @@
 name: destroy
 
-# Tears down everything in envs/prod (CloudFront, S3 web bucket, EC2 host with its Postgres data,
-# SSM parameters, deploy roles, budgets). The state bucket and the destroy role in bootstrap/ stay.
+# Tears down everything in envs/prod (Cloudflare DNS record, EC2 host with its
+# Postgres data, SSM parameters, deploy roles, budgets). The state bucket and the destroy role in
+# bootstrap/ stay.
 # THE DATABASE IS DELETED WITH THE HOST AND THERE ARE NO BACKUPS.
 #
 # Trigger: push the tag destroy-prod, then approve the run in the "destroy" GitHub Environment.
@@ -29,8 +30,13 @@ jobs:
       contents: read
     env:
       TF_IN_AUTOMATION: "true"
-      # The variable has no default but destroy never uses it.
+      # These variables have no default but destroy never uses their values.
       TF_VAR_alert_email: destroy@example.com
+      TF_VAR_cloudflare_zone_id: unused
+      TF_VAR_api_hostname: unused.example.com
+      TF_VAR_frontend_origin: https://unused.example.com
+      # Deletes the DNS record. Environment secret; a Zone > DNS > Edit token for the API's zone.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     defaults:
       run:
         working-directory: envs/prod

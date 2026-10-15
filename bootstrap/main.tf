@@ -162,7 +162,7 @@ data "aws_iam_policy_document" "destroy_trust" {
 resource "aws_iam_role" "terraform_destroy" {
   name                 = "ophub-terraform-destroy"
   assume_role_policy   = data.aws_iam_policy_document.destroy_trust.json
-  max_session_duration = 7200 # a CloudFront distribution takes up to 30 minutes to delete
+  max_session_duration = 7200 # headroom for a slow instance termination
 }
 
 data "aws_iam_policy_document" "terraform_destroy" {
@@ -205,21 +205,8 @@ data "aws_iam_policy_document" "terraform_destroy" {
       "ec2:RevokeSecurityGroupIngress",
       "ec2:RevokeSecurityGroupEgress",
       "ec2:DeleteSecurityGroup",
+      "ec2:DeleteManagedPrefixList",
       "ec2:DeleteTags",
-    ]
-    resources = ["*"]
-  }
-
-  statement {
-    sid = "CloudFrontReadAndDelete"
-    actions = [
-      "cloudfront:Get*",
-      "cloudfront:List*",
-      "cloudfront:Describe*",
-      "cloudfront:UpdateDistribution",
-      "cloudfront:DeleteDistribution",
-      "cloudfront:DeleteOriginAccessControl",
-      "cloudfront:DeleteFunction",
     ]
     resources = ["*"]
   }
@@ -252,24 +239,6 @@ data "aws_iam_policy_document" "terraform_destroy" {
     sid       = "IamListProviders"
     actions   = ["iam:ListOpenIDConnectProviders"]
     resources = ["*"]
-  }
-
-  statement {
-    sid = "WebBucketReadAndDelete"
-    actions = [
-      "s3:Get*",
-      "s3:List*",
-      "s3:DeleteObject",
-      "s3:DeleteObjectVersion",
-      "s3:DeleteBucket",
-      "s3:DeleteBucketPolicy",
-      "s3:PutBucketPublicAccessBlock",
-      "s3:PutEncryptionConfiguration",
-    ]
-    resources = [
-      "arn:aws:s3:::ophub-prod-web-*",
-      "arn:aws:s3:::ophub-prod-web-*/*",
-    ]
   }
 
   statement {

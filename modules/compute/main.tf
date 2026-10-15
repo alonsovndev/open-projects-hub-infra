@@ -31,23 +31,41 @@ data "aws_subnets" "supported" {
   }
 }
 
-data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
-  name = "com.amazonaws.global.cloudfront.origin-facing"
+# Cloudflare's published edge ranges. The host only answers the proxy, never the open internet.
+resource "aws_ec2_managed_prefix_list" "edge" {
+  name           = "${var.name}-edge"
+  address_family = "IPv4"
+  max_entries    = 20
+
+  dynamic "entry" {
+    for_each = toset(var.edge_ipv4_cidrs)
+
+    content {
+      cidr        = entry.value
+      description = "Cloudflare edge"
+    }
+  }
 }
 
 resource "aws_security_group" "api" {
   name        = "${var.name}-api"
-  description = "API host: HTTP from CloudFront only, no SSH (use SSM Session Manager)"
+  description = "API host: HTTPS from Cloudflare only, no SSH (use SSM Session Manager)"
   vpc_id      = data.aws_vpc.default.id
+
+  # The description cannot change in place; replacing the group would detach it from the live host.
+  # The group first created here said "HTTP from CloudFront only"; the rules are what counts.
+  lifecycle {
+    ignore_changes = [description]
+  }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "http_from_cloudfront" {
+resource "aws_vpc_security_group_ingress_rule" "https_from_edge" {
   security_group_id = aws_security_group.api.id
-  description       = "HTTP from CloudFront origin-facing servers"
+  description       = "HTTPS from Cloudflare edge servers"
   ip_protocol       = "tcp"
-  from_port         = 80
-  to_port           = 80
-  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id
+  from_port         = 443
+  to_port           = 443
+  prefix_list_id    = aws_ec2_managed_prefix_list.edge.id
 }
 
 resource "aws_vpc_security_group_egress_rule" "all_outbound" {

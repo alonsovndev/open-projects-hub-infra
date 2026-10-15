@@ -60,37 +60,9 @@ data "aws_iam_policy_document" "api_trust" {
   }
 }
 
-data "aws_iam_policy_document" "web_trust" {
-  statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringLike"
-      variable = "token.actions.githubusercontent.com:sub"
-      values   = [for ref in var.allowed_refs : "repo:${var.github_owner}/${var.web_repo}:ref:${ref}"]
-    }
-  }
-}
-
 resource "aws_iam_role" "api_deploy" {
   name               = "${var.name}-api-deploy"
   assume_role_policy = data.aws_iam_policy_document.api_trust.json
-}
-
-resource "aws_iam_role" "web_deploy" {
-  name               = "${var.name}-web-deploy"
-  assume_role_policy = data.aws_iam_policy_document.web_trust.json
 }
 
 data "aws_iam_policy_document" "api_deploy" {
@@ -115,30 +87,4 @@ resource "aws_iam_role_policy" "api_deploy" {
   name   = "ssm-run-command"
   role   = aws_iam_role.api_deploy.id
   policy = data.aws_iam_policy_document.api_deploy.json
-}
-
-data "aws_iam_policy_document" "web_deploy" {
-  statement {
-    sid       = "ListBucket"
-    actions   = ["s3:ListBucket"]
-    resources = [var.web_bucket_arn]
-  }
-
-  statement {
-    sid       = "SyncObjects"
-    actions   = ["s3:PutObject", "s3:DeleteObject"]
-    resources = ["${var.web_bucket_arn}/*"]
-  }
-
-  statement {
-    sid       = "InvalidateCache"
-    actions   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"]
-    resources = [var.distribution_arn]
-  }
-}
-
-resource "aws_iam_role_policy" "web_deploy" {
-  name   = "s3-sync-and-invalidate"
-  role   = aws_iam_role.web_deploy.id
-  policy = data.aws_iam_policy_document.web_deploy.json
 }

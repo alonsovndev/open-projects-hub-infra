@@ -8,7 +8,7 @@ output "instance_arn" {
   value       = aws_instance.api.arn
 }
 
-output "origin_domain_name" {
-  description = "Public DNS name of the Elastic IP, used as the CloudFront API origin."
-  value       = aws_eip.api.public_dns
+output "public_ip" {
+  description = "Elastic IP of the host, the target of the Cloudflare DNS record."
+  value       = aws_eip.api.public_ip
 }
