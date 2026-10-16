@@ -21,6 +21,13 @@ variable "api_repo" {
   default     = "open-projects-hub-api"
 }
 
+# Read it with: gh api repos/<owner>/<repo>/actions/oidc/customization/sub (sub_claim_prefix).
+variable "api_repo_subject" {
+  description = "OIDC subject prefix GitHub signs for the backend repository."
+  type        = string
+  default     = "repo:alonsovndev@286775429/open-projects-hub-api@1301132925"
+}
+
 variable "instance_type" {
   description = "API host instance type (must be Free Plan eligible)."
   type        = string

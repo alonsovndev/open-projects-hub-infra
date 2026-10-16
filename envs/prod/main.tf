@@ -31,6 +31,7 @@ module "github_oidc" {
   name             = local.name
   github_owner     = var.github_owner
   api_repo         = var.api_repo
+  api_repo_subject = var.api_repo_subject
   api_instance_arn = module.compute.instance_arn
 }
 

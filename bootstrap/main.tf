@@ -27,6 +27,13 @@ variable "infra_repo" {
   default     = "open-projects-hub-infra"
 }
 
+# Read it with: gh api repos/<owner>/<repo>/actions/oidc/customization/sub (sub_claim_prefix).
+variable "infra_repo_subject" {
+  description = "OIDC subject prefix GitHub signs for the infrastructure repository."
+  type        = string
+  default     = "repo:alonsovndev@286775429/open-projects-hub-infra@1412623684"
+}
+
 provider "aws" {
   region = var.region
 
@@ -154,7 +161,7 @@ data "aws_iam_policy_document" "destroy_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_owner}/${var.infra_repo}:environment:destroy"]
+      values   = ["${var.infra_repo_subject}:environment:destroy"]
     }
   }
 }

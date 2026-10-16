@@ -13,6 +13,11 @@ variable "api_repo" {
   type        = string
 }
 
+variable "api_repo_subject" {
+  description = "OIDC subject prefix of the backend repository, as GitHub signs it (repo:OWNER@ID/REPO@ID with immutable subjects)."
+  type        = string
+}
+
 variable "allowed_refs" {
   description = "Git refs allowed to assume the deploy role (StringLike patterns)."
   type        = list(string)
