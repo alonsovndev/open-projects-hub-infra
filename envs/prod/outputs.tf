@@ -9,13 +9,8 @@ output "host_public_ip" {
 }
 
 output "api_instance_id" {
-  description = "EC2 instance ID targeted by the API deploy workflow (SSM Run Command)."
+  description = "EC2 instance ID targeted by the deploy command (SSM Run Command)."
   value       = module.compute.instance_id
-}
-
-output "api_deploy_role_arn" {
-  description = "Role ARN for the API repo GitHub Actions OIDC login."
-  value       = module.github_oidc.api_deploy_role_arn
 }
 
 output "ssm_parameter_prefix" {
@@ -24,6 +19,6 @@ output "ssm_parameter_prefix" {
 }
 
 output "deploy_document_name" {
-  description = "SSM document run by the API deploy workflow."
-  value       = module.github_oidc.deploy_document_name
+  description = "SSM document that deploys a release tag on the host."
+  value       = module.deploy.deploy_document_name
 }

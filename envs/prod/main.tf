@@ -25,14 +25,12 @@ resource "cloudflare_dns_record" "api" {
   comment = "Open Projects Hub API (managed by Terraform)"
 }
 
-module "github_oidc" {
-  source = "../../modules/github-oidc"
+module "deploy" {
+  source = "../../modules/deploy"
 
-  name             = local.name
-  github_owner     = var.github_owner
-  api_repo         = var.api_repo
-  api_repo_subject = var.api_repo_subject
-  api_instance_arn = module.compute.instance_arn
+  name         = local.name
+  github_owner = var.github_owner
+  api_repo     = var.api_repo
 }
 
 resource "aws_budgets_budget" "cash_spend" {
