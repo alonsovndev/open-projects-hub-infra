@@ -1,0 +1,30 @@
+name: terraform
+
+# No path filter: a skipped workflow never reports its check, which would block a required status check on docs-only pull requests.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.12.0
+
+      - name: Format
+        run: terraform fmt -check -recursive
+
+      # No AWS credentials here: validate only needs the providers, not the backend.
+      - name: Validate
+        run: |
+          for stack in bootstrap envs/prod; do
+            terraform -chdir="$stack" init -backend=false -input=false
+            terraform -chdir="$stack" validate
+          done
