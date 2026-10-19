@@ -14,12 +14,11 @@ Browser -> https://oph.alonsovndev.com      Cloudflare Workers (static web app, 
 - The API image is built by GitHub Actions on a release tag. The AWS account sits under an organization whose service control policies allow EC2 only in `us-east-2` and deny reading IAM OIDC providers, so CI cannot assume an AWS role: the deploy is started by hand with `scripts/deploy-release.sh` in the API repo (no long-lived keys anywhere).
 - Design record: ADR-022 in the docs repository.
 
-## Status (2026-10-16)
+## Status (2026-10-19)
 
-- **Account:** the stack runs in AWS account `044986460195` (Free Plan with credits), region `us-east-2`. An earlier copy in account `241016605697` (no credits) was destroyed on 2026-10-16.
-- **Done:** web on Cloudflare Workers, API image `v0.1.0` published to GHCR, Resend sending domain `send.alonsovndev.com` verified.
-- **Next:** apply `bootstrap/` and `envs/prod` in the new account, set the SMTP parameters, deploy `v0.1.0` with `scripts/deploy-release.sh`, then the [first release checklist](#first-release-checklist). Applies are TBD until done.
-- **Open:** credit balance and expiry of the new account (TBD, read them in Billing > Credits).
+- **Live:** the stack runs in AWS account `044986460195` (Free Plan with credits), region `us-east-2`. API `v0.1.0` was deployed with `scripts/deploy-release.sh` and answers at `https://api-oph.alonsovndev.com`; sign-up from `https://oph.alonsovndev.com` works end to end (email through Resend, sending domain `send.alonsovndev.com`).
+- **History:** an earlier copy in account `241016605697` (no credits) was destroyed on 2026-10-16.
+- **Not done:** the admin user is not seeded (not needed: self-registration works).
 
 ## Layout
 
@@ -50,11 +49,13 @@ Without working SMTP the API cannot send sign-up verification codes, so new self
 
 ## Free Plan limits
 
-The account is on the Free Plan with credits (balance and expiry: TBD, see Billing > Credits). The README previously recorded $100 and 183 days remaining as of 2026-10-10, so the plan ends around 2027-04-11 or when the credits run out, whichever comes first. Then the account closes and the data is gone unless the plan is upgraded.
+The account is on the Free Plan. On 2026-10-19 the console showed **$119.99 in credits remaining and 174 days left (ends 2027-04-09)**: consistent with $100 of sign-up credit plus $20 earned from Explore AWS activities (1 of 5 completed; the other four can earn up to $80 more). Access ends when the credits run out or the period ends, whichever comes first, and the account then closes unless the plan is upgraded.
+
+At about $12.85/month the 174 days cost roughly $73, so the date, not the credit balance, is the limit.
 
 The account is a member of an AWS Organization whose service control policies (SCPs) deny EC2 outside `us-east-2` and `iam:ListOpenIDConnectProviders` (creating a provider was not tried, and a deny on the read side makes the GitHub OIDC login unusable in practice). That is why the stack uses `us-east-2` and the deploy is started from a workstation instead of GitHub Actions. Other SCP limits may exist; they show up as "explicit deny in a service control policy" errors.
 
-The design costs about $12.85/month, so about $52 for the four months until the review and about $77 for the whole window. The gross-usage budget (alert at $16 in a month) makes credit burn visible.
+The design costs about $12.85/month (the figure uses `us-east-1` list prices; `us-east-2` was not checked, TBD). The gross-usage budget (alert at $16 in a month) makes credit burn visible.
 
 There are no database backups by design (low-stakes review deployment): Postgres data lives only on the EC2 root volume. `prevent_destroy` and EC2 termination protection on the instance guard against accidental loss (a plan that deletes or replaces it fails); if you ever need a copy, run `pg_dump` by hand over SSM Session Manager.
 
