@@ -11,30 +11,30 @@ Browser -> https://oph.alonsovndev.com      Cloudflare Workers (static web app, 
 - The web app is hosted by Cloudflare Workers and is **not** part of this stack. The API lives on its own hostname, so the browser calls it cross-origin (CORS with credentials; the web build sets `VITE_API_BASE_URL`).
 - Cloudflare is the only public entry point to the host: the security group accepts HTTPS only from Cloudflare's IP ranges. There is no SSH; use SSM Session Manager.
 - PostgreSQL runs as a container on the same host. It has no published port and is reachable only from the API container.
-- The API deploys from its repo via a GitHub Actions OIDC role (no long-lived keys).
+- The API image is built by GitHub Actions on a release tag. The AWS account sits under an organization whose service control policies allow EC2 only in `us-east-2` and deny reading IAM OIDC providers, so CI cannot assume an AWS role: the deploy is started by hand with `scripts/deploy-release.sh` in the API repo (no long-lived keys anywhere).
 - Design record: ADR-022 in the docs repository.
 
-## Status (2026-10-15)
+## Status (2026-10-16)
 
-- **Done:** `bootstrap/` applied (state bucket, GitHub OIDC provider, destroy role). The first `envs/prod` apply created 34 resources (EC2 host with first boot checked over SSM, deploy role, SSM parameters, budgets) plus a web bucket and CloudFront leftovers that this design removes.
-- **Changed:** AWS refused the CloudFront distribution (`AccessDenied: Your account must be verified before you can add new CloudFront resources`). The web app now runs on Cloudflare Workers at `https://oph.alonsovndev.com`, and the API sits behind Cloudflare at `https://api-oph.alonsovndev.com` (ADR-022). The code is on the branch `feature/cloudflare-edge`; it is **not applied** yet and has not run on the host.
-- **Next:** do the [Cloudflare setup](#cloudflare-setup), plan and apply `envs/prod`, then the [first release checklist](#first-release-checklist): tag the API, seed the admin user and smoke test. `bootstrap/` also changed (destroy policy), so apply it once more before using the destroy workflow.
-- **Open:** a sending domain for email (new users cannot verify without one; the owned domain makes this possible later). The AWS Support case about CloudFront can stay open or be closed; nothing here depends on it.
+- **Account:** the stack runs in AWS account `044986460195` (Free Plan with credits), region `us-east-2`. An earlier copy in account `241016605697` (no credits) was destroyed on 2026-10-16.
+- **Done:** web on Cloudflare Workers, API image `v0.1.0` published to GHCR, Resend sending domain `send.alonsovndev.com` verified.
+- **Next:** apply `bootstrap/` and `envs/prod` in the new account, set the SMTP parameters, deploy `v0.1.0` with `scripts/deploy-release.sh`, then the [first release checklist](#first-release-checklist). Applies are TBD until done.
+- **Open:** credit balance and expiry of the new account (TBD, read them in Billing > Credits).
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| `bootstrap/` | Applied by hand (local state, not committed): the S3 state bucket, the GitHub OIDC provider and the role the destroy workflow assumes |
+| `bootstrap/` | Applied by hand (local state, not committed): the S3 state bucket |
 | `envs/prod/` | Production stack: wires the modules, the Cloudflare DNS record for the API, budgets, SSM parameters |
 | `modules/compute` | EC2, Elastic IP, security group (HTTPS from Cloudflare ranges), instance role, bootstrap `user_data` |
-| `modules/github-oidc` | The API deploy role and its SSM deploy document (the OIDC provider itself is in `bootstrap/`) |
+| `modules/deploy` | The SSM document that deploys a release tag on the host |
 
 ## Apply order
 
 Requires Terraform >= 1.10, AWS credentials for the target account and the [Cloudflare setup](#cloudflare-setup) done.
 
-1. `cd bootstrap && terraform init && terraform apply` (once per account; run it again whenever `bootstrap/` changes. It must be applied before `envs/prod`, which looks up the GitHub OIDC provider created here).
+1. `cd bootstrap && terraform init && terraform apply` (once per account; it must be applied before `envs/prod`, whose backend is the bucket created here). The bucket name is `ophub-tfstate-<account id>`: put it in `envs/prod/backend.tf`.
 2. `cd envs/prod && cp terraform.tfvars.example terraform.tfvars` and set `alert_email`, `cloudflare_zone_id`, `api_hostname` and `frontend_origin`.
 3. `export CLOUDFLARE_API_TOKEN=...` in the same shell (see the setup section), then `terraform init && terraform plan -out=tfplan`, review, then `terraform apply tfplan`. Delete `tfplan` afterwards; it contains generated secrets.
 
@@ -50,7 +50,9 @@ Without working SMTP the API cannot send sign-up verification codes, so new self
 
 ## Free Plan limits
 
-The account is on the Free Plan with $100 in credits and 183 days remaining as of 2026-10-10, so the plan ends around 2027-04-11 or when the credits run out, whichever comes first. Then the account closes and the data is gone unless the plan is upgraded.
+The account is on the Free Plan with credits (balance and expiry: TBD, see Billing > Credits). The README previously recorded $100 and 183 days remaining as of 2026-10-10, so the plan ends around 2027-04-11 or when the credits run out, whichever comes first. Then the account closes and the data is gone unless the plan is upgraded.
+
+The account is a member of an AWS Organization whose service control policies (SCPs) deny EC2 outside `us-east-2` and `iam:ListOpenIDConnectProviders` (creating a provider was not tried, and a deny on the read side makes the GitHub OIDC login unusable in practice). That is why the stack uses `us-east-2` and the deploy is started from a workstation instead of GitHub Actions. Other SCP limits may exist; they show up as "explicit deny in a service control policy" errors.
 
 The design costs about $12.85/month, so about $52 for the four months until the review and about $77 for the whole window. The gross-usage budget (alert at $16 in a month) makes credit burn visible.
 
@@ -98,11 +100,9 @@ read -rs CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN   # paste the token
 **7. Plan and review.** `terraform init` (it downloads the Cloudflare provider and updates `.terraform.lock.hcl`, which you commit), then `terraform plan -out=tfplan`. A read-only plan against the current state (2026-10-15, dummy Cloudflare token, nothing applied) gave **7 to add, 9 to destroy** (plus an in-place budget change that only appeared because the placeholder email differed from the real one):
    - Added: the Cloudflare DNS record, a managed prefix list with Cloudflare's ranges, the HTTPS security-group rule, and the `API_HOST`, `FRONTEND_BASE_URL`, `CORS_ORIGINS` and `CORS_ALLOW_CREDENTIALS` parameters.
    - Destroyed: the web S3 bucket (empty) with its access-block and encryption settings, the web deploy role, the leftover CloudFront origin access control and function, the old HTTP :80 security-group rule, `ORIGIN_VERIFY` (parameter and random password).
-   - The EC2 instance, the security group, the Elastic IP, the API deploy role and the SSM secrets must **not** appear as destroyed or replaced. If they do, stop and ask.
+   - On a fresh account everything is created. On an existing stack the EC2 instance, the security group, the Elastic IP and the SSM secrets must **not** appear as destroyed or replaced. If they do, stop and ask.
 
 **8. After the apply.** Check the record is proxied: `dig +short api-oph.alonsovndev.com` must print Cloudflare addresses (104.x, 172.67.x), not the Elastic IP. Until the first API release is deployed the API hostname shows Cloudflare error **521** ("web server is down"), which is expected: no Caddy is running on the host yet.
-
-**9. Destroy workflow secret.** GitHub > `open-projects-hub-infra` > Settings > Environments > `destroy` > **Environment secrets** > add `CLOUDFLARE_API_TOKEN` (same token, or a second one created the same way). Without it the destroy run cannot delete the DNS record.
 
 Troubleshooting (errors Cloudflare shows in the browser):
 
@@ -113,7 +113,7 @@ Troubleshooting (errors Cloudflare shows in the browser):
 | 525 | TLS handshake with the host failed | Caddy not up yet; `API_HOST` wrong in SSM (must equal `api_hostname`) |
 | 526 | Host certificate rejected | SSL/TLS mode is Full (strict); set it to Full |
 | Redirect loop | Too many redirects | SSL/TLS mode is Flexible; set it to Full |
-| 403 HTML in the deploy smoke test | Cloudflare bot protection challenged the GitHub runner | Turn off Bot Fight Mode for the zone or add a WAF skip rule for `api-oph`; the check expects a JSON 4xx |
+| 403 HTML in the deploy smoke test | Cloudflare bot protection challenged the request | Turn off Bot Fight Mode for the zone or add a WAF skip rule for `api-oph`; the check expects a JSON 4xx |
 | 1000-series | DNS points to a prohibited IP | The record is missing or not proxied; re-run `terraform plan` |
 
 ## First release checklist
@@ -121,10 +121,10 @@ Troubleshooting (errors Cloudflare shows in the browser):
 Manual steps that no workflow does for you:
 
 1. Finish the [Cloudflare setup](#cloudflare-setup) and `terraform apply` for `envs/prod`, then check the host's first boot over SSM Session Manager: `cloud-init status` (the setup script never re-runs). On a t3.micro it takes about six minutes.
-2. Set the API repo variables from `terraform output`: `AWS_ROLE_ARN` (`api_deploy_role_arn`), `AWS_REGION`, `API_INSTANCE_ID` (`api_instance_id`), `API_URL` (`api_url`). The deploy workflow ends with a smoke test through `API_URL` and fails if it is empty; it also refuses a tag whose commit is not on `main`. The web repo needs no AWS variables.
-3. Add tag protection (rulesets) for `v*` on the API and infra repositories. The deploy role trusts any `v*` tag, so whoever can push a tag can deploy as root on the host.
-4. Set any SSM placeholders you need (see Secrets).
-5. Push the API tag first (`vX.Y.Z`). After the image is pushed, the deploy job stops at its "publicly pullable image" check. Set the GHCR package `open-projects-hub-api` to **Public** (GitHub profile > Packages > Package settings), then re-run the failed job from the tag. The host pulls without credentials.
+2. Add tag protection (rulesets) for `v*` on the API repository: whoever can push a tag publishes the image the host will pull.
+3. Set any SSM placeholders you need (see Secrets), in the region and account of the stack.
+4. Push the API tag (`vX.Y.Z`). The `deploy` workflow builds and pushes the image. Set the GHCR package `open-projects-hub-api` to **Public** (GitHub profile > Packages > Package settings) once; the host pulls without credentials.
+5. Deploy it from your workstation, with credentials for the stack's AWS account: `AWS_PROFILE=<profile> API_URL=<api_url output> scripts/deploy-release.sh vX.Y.Z` (in the API repo). It finds the host by its `ophub-prod-api` name tag, so it needs no instance id.
 6. Make the web build call the API: `VITE_API_BASE_URL=https://api-oph.alonsovndev.com` in the web repo's `.env.production`, merged to the branch Cloudflare builds for production.
 7. Seed the admin once over SSM (`ADMIN_PASSWORD` needs a letter and a digit):
    `cd /opt/ophub && docker compose -f compose.prod.yml --profile seed run --rm -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='...' seed-admin`
@@ -133,25 +133,16 @@ Manual steps that no workflow does for you:
 Operational notes:
 
 - Never delete and re-push a release tag: `raw.githubusercontent.com` caches files for several minutes, so a re-pushed tag can deploy stale files. Cut a new patch version instead.
-- After changing `api_hostname` or `frontend_origin`, run an API deploy: the host reads the SSM parameters only on deploy.
+- After changing `api_hostname`, `frontend_origin` or an SSM parameter, run `scripts/deploy-release.sh` again with the current tag: the host reads the SSM parameters only on deploy.
 - Preview deployments of the web app run on other origins and are rejected by the API's CORS list; only `frontend_origin` can log in.
 - Cloudflare must keep the record proxied (orange cloud). The security group admits only Cloudflare's ranges, so a DNS-only record is unreachable.
 
 ## Destroy
 
-Pushing the tag `destroy-prod` runs `.github/workflows/destroy.yml`, which removes everything in `envs/prod` (the Cloudflare DNS record, the EC2 host **with its Postgres data**, SSM parameters, deploy roles, budgets). There are no backups, so run `pg_dump` over SSM first if you want the data. The state bucket and the destroy role in `bootstrap/` stay, so `envs/prod` can be applied again later.
+There is no destroy workflow: it needed a GitHub OIDC role, which the account's SCPs forbid. Tear down from a workstation with credentials for the stack's account. Everything in `envs/prod` goes (the Cloudflare DNS record, the EC2 host **with its Postgres data**, SSM parameters, SSM document, budgets). There are no backups, so run `pg_dump` over SSM first if you want the data. The state bucket from `bootstrap/` stays, so `envs/prod` can be applied again later.
 
-One-time setup (the workflow cannot run without it), in this order:
+1. Remove the `prevent_destroy = true` line from `modules/compute/main.tf` locally (do not commit it).
+2. Export `CLOUDFLARE_API_TOKEN`, then `terraform plan -destroy -out=destroy.tfplan` in `envs/prod`, review it, and `terraform apply destroy.tfplan`. The AWS provider switches off the instance's termination protection itself before terminating it.
+3. Revert the local edit and check that no instance, Elastic IP or volume is left (`aws ec2 describe-instances`, `describe-addresses`, `describe-volumes`).
 
-1. Create the GitHub Environment `destroy` (Settings > Environments) with **required reviewers** and a deployment rule that only allows the tag `destroy-prod`. Do this before step 2: the role trusts the environment by name, and GitHub creates a missing environment unprotected the first time a workflow names it.
-2. Apply `bootstrap/` (creates the GitHub OIDC provider and the role `ophub-terraform-destroy`), then set the repository variable `DESTROY_ROLE_ARN` to the `destroy_role_arn` output.
-3. Add tag protection for `destroy-*`, like `v*`.
-4. Add the Environment secret `CLOUDFLARE_API_TOKEN` to `destroy` (see step 9 of the Cloudflare setup).
-
-These GitHub settings are the real security boundary. The "commit is on `main`" check inside the workflow files only prevents mistakes: whoever can push a tag can also push a commit that edits the workflow. You are the only reviewer, so the approval is a deliberate pause, not a second pair of eyes; the plan is printed in the job log after you approve.
-
-To run it: `git tag destroy-prod && git push origin destroy-prod` from a commit on `main`, then approve the run. To run it again, delete the tag first (`git push origin :refs/tags/destroy-prod`). The workflow removes the `prevent_destroy` line from its throwaway checkout, turns off the instance's termination protection with the AWS CLI, destroys, and fails if any resource is left in state. A partial failure is safe to re-run. The SSM parameters you set by hand (SMTP, Gemini, Sentry) are deleted too, and GHCR images are not touched. After a later `apply`, the repository variables (`API_INSTANCE_ID`, `API_URL`, the role ARN) must be set again from `terraform output`, because the IDs change.
-
-The destroy role's policy was written without running it: the first real destroy may stop on a missing permission. Add the action to `bootstrap/main.tf`, apply, and re-run.
-
-To destroy by hand instead: remove `prevent_destroy` from `modules/compute/main.tf`, run `aws ec2 modify-instance-attribute --no-disable-api-termination --instance-id <id>`, then `terraform destroy` in `envs/prod`.
+The 2026-10-16 teardown of the first account followed exactly these steps (32 resources destroyed; `aws ec2 modify-instance-attribute` did not change the protection, the Terraform apply did).

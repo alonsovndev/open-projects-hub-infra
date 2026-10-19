@@ -1,7 +1,7 @@
 variable "region" {
   description = "AWS region for all resources."
   type        = string
-  default     = "us-east-1"
+  default     = "us-east-2"
 }
 
 variable "alert_email" {
@@ -19,13 +19,6 @@ variable "api_repo" {
   description = "Backend repository name."
   type        = string
   default     = "open-projects-hub-api"
-}
-
-# Read it with: gh api repos/<owner>/<repo>/actions/oidc/customization/sub (sub_claim_prefix).
-variable "api_repo_subject" {
-  description = "OIDC subject prefix GitHub signs for the backend repository."
-  type        = string
-  default     = "repo:alonsovndev@286775429/open-projects-hub-api@1301132925"
 }
 
 variable "instance_type" {
