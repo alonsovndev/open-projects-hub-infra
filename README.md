@@ -49,7 +49,7 @@ Without working SMTP the API cannot send sign-up verification codes, so new self
 
 ## Free Plan limits
 
-The account is on the Free Plan. On 2026-10-19 the console showed **$119.99 in credits remaining and 174 days left (ends 2027-04-09)**: $100 of sign-up credit plus $20 earned from Explore AWS activities (1 of 5 completed; the other four can earn up to $80 more). Access ends when the credits run out or the period ends, whichever comes first, and the account then closes unless the plan is upgraded.
+The account is on the Free Plan. On 2026-10-19 the console showed **$119.99 in credits remaining and 174 days left (ends 2027-04-09)**: consistent with $100 of sign-up credit plus $20 earned from Explore AWS activities (1 of 5 completed; the other four can earn up to $80 more). Access ends when the credits run out or the period ends, whichever comes first, and the account then closes unless the plan is upgraded.
 
 At about $12.85/month the 174 days cost roughly $73, so the date, not the credit balance, is the limit.
 
