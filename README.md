@@ -1,6 +1,12 @@
-# open-projects-hub-infra
+# Open Projects Hub Infrastructure
 
-Terraform for the Open Projects Hub production deployment on AWS, designed to stay inside the AWS Free Plan credits.
+> Terraform for the [Open Projects Hub](https://oph-docs.alonsovndev.com) production deployment on AWS, designed to stay inside the AWS Free Plan credits.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Part of [alonsovndev](https://github.com/alonsovndev), the open-source engineering lab by [Alonso Villanueva](https://alonsovndev.com).
+
+**Links:** [web app](https://oph.alonsovndev.com) · [API](https://api-oph.alonsovndev.com) · [documentation](https://oph-docs.alonsovndev.com) · [open-projects-hub-api](https://github.com/alonsovndev/open-projects-hub-api) · [open-projects-hub-web](https://github.com/alonsovndev/open-projects-hub-web) · [open-projects-hub-docs](https://github.com/alonsovndev/open-projects-hub-docs)
 
 ```
 Browser -> https://oph.alonsovndev.com      Cloudflare Workers (static web app, deployed from the web repo)
@@ -11,14 +17,13 @@ Browser -> https://oph.alonsovndev.com      Cloudflare Workers (static web app, 
 - The web app is hosted by Cloudflare Workers and is **not** part of this stack. The API lives on its own hostname, so the browser calls it cross-origin (CORS with credentials; the web build sets `VITE_API_BASE_URL`).
 - Cloudflare is the only public entry point to the host: the security group accepts HTTPS only from Cloudflare's IP ranges. There is no SSH; use SSM Session Manager.
 - PostgreSQL runs as a container on the same host. It has no published port and is reachable only from the API container.
-- The API image is built by GitHub Actions on a release tag. The AWS account sits under an organization whose service control policies allow EC2 only in `us-east-2` and deny reading IAM OIDC providers, so CI cannot assume an AWS role: the deploy is started by hand with `scripts/deploy-release.sh` in the API repo (no long-lived keys anywhere).
-- Design record: ADR-022 in the docs repository.
+- The API image is built by GitHub Actions on a release tag. The AWS account's organization policies allow EC2 only in `us-east-2` and do not allow a GitHub OIDC login, so CI cannot assume an AWS role: the deploy is started by hand with `scripts/deploy-release.sh` in the API repo (no long-lived keys anywhere).
+- Design records in the docs repository: ADR-021 (single host), ADR-022 (Cloudflare edge) and ADR-023 (credits account, `us-east-2`, manual deploys); ADR-024 covers email.
 
 ## Status (2026-10-19)
 
-- **Live:** the stack runs in AWS account `044986460195` (Free Plan with credits), region `us-east-2`. API `v0.1.0` was deployed with `scripts/deploy-release.sh` and answers at `https://api-oph.alonsovndev.com`; sign-up from `https://oph.alonsovndev.com` works end to end (email through Resend, sending domain `send.alonsovndev.com`).
-- **History:** an earlier copy in account `241016605697` (no credits) was destroyed on 2026-10-16.
-- **Not done:** the admin user is not seeded (not needed: self-registration works).
+- **Live:** the stack runs in the AWS account that holds the Free Plan credits, region `us-east-2`. API `v0.1.0` was deployed with `scripts/deploy-release.sh` and answers at `https://api-oph.alonsovndev.com`; sign-up from `https://oph.alonsovndev.com` works end to end (email through Resend, sending domain `send.alonsovndev.com`).
+- **Not done:** the admin user is not seeded (not needed: self-registration works). Seeding is an optional step in the API repository.
 
 ## Layout
 
@@ -29,9 +34,25 @@ Browser -> https://oph.alonsovndev.com      Cloudflare Workers (static web app, 
 | `modules/compute` | EC2, Elastic IP, security group (HTTPS from Cloudflare ranges), instance role, bootstrap `user_data` |
 | `modules/deploy` | The SSM document that deploys a release tag on the host |
 
+CI: `.github/workflows/terraform.yml` runs `terraform fmt -check -recursive` and `terraform validate` on every pull request (Terraform 1.12.0); `.github/dependabot.yml` keeps the pinned GitHub Actions current. Nothing in CI applies infrastructure.
+
+## Inputs and outputs (`envs/prod`)
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `alert_email` | required | Receives AWS Budgets cost alerts |
+| `cloudflare_zone_id` | required | Cloudflare zone holding the API hostname |
+| `api_hostname` | required | Public API hostname, one label under the zone |
+| `frontend_origin` | required | Web origin allowed by CORS and used in email links |
+| `region` | `us-east-2` | AWS region |
+| `instance_type` | `t3.micro` | API host size (Free Plan eligible) |
+| `github_owner`, `api_repo` | `alonsovndev`, `open-projects-hub-api` | Where the deploy document downloads `deploy.sh` for a release tag |
+
+Outputs: `api_url`, `host_public_ip`, `api_instance_id`, `ssm_parameter_prefix`, `deploy_document_name`. Two AWS Budgets are created: one on real (post-credit) charges and one on gross usage.
+
 ## Apply order
 
-Requires Terraform >= 1.10, AWS credentials for the target account and the [Cloudflare setup](#cloudflare-setup) done.
+Requires Terraform >= 1.10 (CI pins 1.12.0 in `.terraform-version`), AWS credentials for the target account and the [Cloudflare setup](#cloudflare-setup) done.
 
 1. `cd bootstrap && terraform init && terraform apply` (once per account; it must be applied before `envs/prod`, whose backend is the bucket created here). The bucket name is `ophub-tfstate-<account id>`: put it in `envs/prod/backend.tf`.
 2. `cd envs/prod && cp terraform.tfvars.example terraform.tfvars` and set `alert_email`, `cloudflare_zone_id`, `api_hostname` and `frontend_origin`.
@@ -45,17 +66,15 @@ Generated by Terraform into SSM Parameter Store under `/ophub/prod/`: `SECRET_KE
 
 Placeholders (`N/A`) to set by hand with `aws ssm put-parameter --overwrite --type SecureString`: `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, `GEMINI_API_KEY`, `SENTRY_DSN`. The deploy script skips parameters still set to `N/A`, so the app sees them as unset. Values cannot contain a single quote. Changes reach the host on the next API deploy.
 
-Without working SMTP the API cannot send sign-up verification codes, so new self-registered users cannot log in. Without a sending domain, Resend delivers only to its owner's address. Use the seeded admin account for the review, or add a verified domain later.
+Without working SMTP the API cannot send sign-up verification codes, so new self-registered users cannot log in. Resend delivers to arbitrary recipients only from a verified sending domain (here `send.alonsovndev.com`). The SMTP values are `SMTP_HOST=smtp.resend.com`, `SMTP_USERNAME=resend`, `SMTP_PASSWORD=<Resend API key>` and `SMTP_FROM_ADDRESS=no-reply@<verified domain>`; the API repository's `docs/configuration/email-deliverability.md` has the DNS checklist ([ADR-024](https://oph-docs.alonsovndev.com/docs/04-decisions/adr-024-email-delivery-with-resend/)).
 
 ## Free Plan limits
 
-The account is on the Free Plan. On 2026-10-19 the console showed **$119.99 in credits remaining and 174 days left (ends 2027-04-09)**: consistent with $100 of sign-up credit plus $20 earned from Explore AWS activities (1 of 5 completed; the other four can earn up to $80 more). Access ends when the credits run out or the period ends, whichever comes first, and the account then closes unless the plan is upgraded.
+The account is on the AWS Free Plan: a fixed period and a credit allowance. Access ends when the credits run out or the period ends, whichever comes first, and the account then closes unless the plan is upgraded. At about $12.85/month the period, not the credit balance, is the likely limit. The owner tracks the current balance and dates in the AWS console; they are not recorded here.
 
-At about $12.85/month the 174 days cost roughly $73, so the date, not the credit balance, is the limit.
+The account's organization policies deny EC2 outside `us-east-2` and make the GitHub OIDC login unusable. That is why the stack uses `us-east-2` and the deploy is started from a workstation instead of GitHub Actions. Other limits may exist; they show up as "explicit deny in a service control policy" errors.
 
-The account is a member of an AWS Organization whose service control policies (SCPs) deny EC2 outside `us-east-2` and `iam:ListOpenIDConnectProviders` (creating a provider was not tried, and a deny on the read side makes the GitHub OIDC login unusable in practice). That is why the stack uses `us-east-2` and the deploy is started from a workstation instead of GitHub Actions. Other SCP limits may exist; they show up as "explicit deny in a service control policy" errors.
-
-The design costs about $12.85/month (the figure uses `us-east-1` list prices; `us-east-2` was not checked, TBD). The gross-usage budget (alert at $16 in a month) makes credit burn visible.
+The design costs about $12.85/month (the figure uses `us-east-1` list prices; the `us-east-2` price is TBD, not checked). The gross-usage budget makes credit burn visible.
 
 There are no database backups by design (low-stakes review deployment): Postgres data lives only on the EC2 root volume. `prevent_destroy` and EC2 termination protection on the instance guard against accidental loss (a plan that deletes or replaces it fails); if you ever need a copy, run `pg_dump` by hand over SSM Session Manager.
 
@@ -86,7 +105,7 @@ curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" https://api.cloudflare.
 **5. Fill the Terraform variables.** In `envs/prod/terraform.tfvars` (git-ignored):
 
 ```hcl
-alert_email        = "alonsonh94@gmail.com"
+alert_email        = "you@example.com"
 cloudflare_zone_id = "<Zone ID from step 2>"
 api_hostname       = "api-oph.alonsovndev.com"
 frontend_origin    = "https://oph.alonsovndev.com"
@@ -98,10 +117,9 @@ frontend_origin    = "https://oph.alonsovndev.com"
 read -rs CLOUDFLARE_API_TOKEN && export CLOUDFLARE_API_TOKEN   # paste the token, press Enter
 ```
 
-**7. Plan and review.** `terraform init` (it downloads the Cloudflare provider and updates `.terraform.lock.hcl`, which you commit), then `terraform plan -out=tfplan`. A read-only plan against the current state (2026-10-15, dummy Cloudflare token, nothing applied) gave **7 to add, 9 to destroy** (plus an in-place budget change that only appeared because the placeholder email differed from the real one):
-   - Added: the Cloudflare DNS record, a managed prefix list with Cloudflare's ranges, the HTTPS security-group rule, and the `API_HOST`, `FRONTEND_BASE_URL`, `CORS_ORIGINS` and `CORS_ALLOW_CREDENTIALS` parameters.
-   - Destroyed: the web S3 bucket (empty) with its access-block and encryption settings, the web deploy role, the leftover CloudFront origin access control and function, the old HTTP :80 security-group rule, `ORIGIN_VERIFY` (parameter and random password).
-   - On a fresh account everything is created. On an existing stack the EC2 instance, the security group, the Elastic IP and the SSM secrets must **not** appear as destroyed or replaced. If they do, stop and ask.
+**7. Plan and review.** `terraform init` (it downloads the Cloudflare provider and updates `.terraform.lock.hcl`, which you commit), then `terraform plan -out=tfplan`.
+   - On a fresh account everything is created (about 30 resources in `envs/prod`: the EC2 host, Elastic IP, security group with Cloudflare's ranges, SSM parameters and deploy document, budgets and the Cloudflare DNS record).
+   - On an existing stack the EC2 instance, the security group, the Elastic IP and the SSM secrets must **not** appear as destroyed or replaced. If they do, stop and ask.
 
 **8. After the apply.** Check the record is proxied: `dig +short api-oph.alonsovndev.com` must print Cloudflare addresses (104.x, 172.67.x), not the Elastic IP. Until the first API release is deployed the API hostname shows Cloudflare error **521** ("web server is down"), which is expected: no Caddy is running on the host yet.
 
@@ -127,9 +145,9 @@ Manual steps that no workflow does for you:
 4. Push the API tag (`vX.Y.Z`). The `deploy` workflow builds and pushes the image. Set the GHCR package `open-projects-hub-api` to **Public** (GitHub profile > Packages > Package settings) once; the host pulls without credentials.
 5. Deploy it from your workstation, with credentials for the stack's AWS account: `AWS_PROFILE=<profile> API_URL=<api_url output> scripts/deploy-release.sh vX.Y.Z` (in the API repo). It finds the host by its `ophub-prod-api` name tag, so it needs no instance id.
 6. Make the web build call the API: `VITE_API_BASE_URL=https://api-oph.alonsovndev.com` in the web repo's `.env.production`, merged to the branch Cloudflare builds for production.
-7. Seed the admin once over SSM (`ADMIN_PASSWORD` needs a letter and a digit):
-   `cd /opt/ophub && docker compose -f compose.prod.yml --profile seed run --rm -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='...' seed-admin`
-8. Smoke test from `https://oph.alonsovndev.com`: log in as the admin, reload (the session cookie must survive), create a project.
+7. Smoke test from `https://oph.alonsovndev.com`: register an account (the verification code arrives by email), log in, reload (the session cookie must survive) and create a project.
+
+Optional: seed an administrator without email over SSM (`ADMIN_PASSWORD` needs a letter and a digit): `cd /opt/ophub && docker compose -f compose.prod.yml --profile seed run --rm -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='...' seed-admin`. This was not done for the current deployment.
 
 Operational notes:
 
@@ -140,10 +158,14 @@ Operational notes:
 
 ## Destroy
 
-There is no destroy workflow: it needed a GitHub OIDC role, which the account's SCPs forbid. Tear down from a workstation with credentials for the stack's account. Everything in `envs/prod` goes (the Cloudflare DNS record, the EC2 host **with its Postgres data**, SSM parameters, SSM document, budgets). There are no backups, so run `pg_dump` over SSM first if you want the data. The state bucket from `bootstrap/` stays, so `envs/prod` can be applied again later.
+There is no destroy workflow: it needed a GitHub OIDC role, which the account's organization policies do not allow. Tear down from a workstation with credentials for the stack's account. Everything in `envs/prod` goes (the Cloudflare DNS record, the EC2 host **with its Postgres data**, SSM parameters, SSM document, budgets). There are no backups, so run `pg_dump` over SSM first if you want the data. The state bucket from `bootstrap/` stays, so `envs/prod` can be applied again later.
 
 1. Remove the `prevent_destroy = true` line from `modules/compute/main.tf` locally (do not commit it).
 2. Export `CLOUDFLARE_API_TOKEN`, then `terraform plan -destroy -out=destroy.tfplan` in `envs/prod`, review it, and `terraform apply destroy.tfplan`. The AWS provider switches off the instance's termination protection itself before terminating it.
 3. Revert the local edit and check that no instance, Elastic IP or volume is left (`aws ec2 describe-instances`, `describe-addresses`, `describe-volumes`).
 
-The 2026-10-16 teardown of the first account followed exactly these steps (32 resources destroyed; `aws ec2 modify-instance-attribute` did not change the protection, the Terraform apply did).
+A previous teardown of this stack followed exactly these steps (`aws ec2 modify-instance-attribute` did not change the protection, the Terraform apply did).
+
+## Contributing, security and license
+
+Contribution guide, code of conduct and security policy are shared across the organization: see the [`.github` repository](https://github.com/alonsovndev/.github). For this repository, run `terraform fmt -recursive` before opening a pull request (CI fails on unformatted code) and never commit `terraform.tfvars`, state files or plan files. [MIT](LICENSE).
