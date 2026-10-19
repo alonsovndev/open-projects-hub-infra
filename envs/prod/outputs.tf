@@ -1,5 +1,5 @@
 output "api_url" {
-  description = "Public URL of the API (value for the API_URL repository variable of the api repo, and VITE_API_BASE_URL of the web build)."
+  description = "Public URL of the API (the API_URL for scripts/deploy-release.sh in the api repo, and VITE_API_BASE_URL of the web build)."
   value       = "https://${var.api_hostname}"
 }
 
@@ -9,7 +9,7 @@ output "host_public_ip" {
 }
 
 output "api_instance_id" {
-  description = "EC2 instance ID targeted by the deploy command (SSM Run Command)."
+  description = "EC2 instance ID of the API host (informational; the deploy script finds the host by its Name tag)."
   value       = module.compute.instance_id
 }
 
