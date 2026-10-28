@@ -20,9 +20,9 @@ Browser -> https://oph.alonsovndev.com      Cloudflare Workers (static web app, 
 - The API image is built by GitHub Actions on a release tag. The AWS account's organization policies allow EC2 only in `us-east-2` and do not allow a GitHub OIDC login, so CI cannot assume an AWS role: the deploy is started by hand with `scripts/deploy-release.sh` in the API repo (no long-lived keys anywhere).
 - Design records in the docs repository: ADR-021 (single host), ADR-022 (Cloudflare edge) and ADR-023 (credits account, `us-east-2`, manual deploys); ADR-024 covers email.
 
-## Status (2026-10-19)
+## Status (2026-10-27)
 
-- **Live:** the stack runs in the AWS account that holds the Free Plan credits, region `us-east-2`. API `v0.1.0` was deployed with `scripts/deploy-release.sh` and answers at `https://api-oph.alonsovndev.com`; sign-up from `https://oph.alonsovndev.com` works end to end (email through Resend, sending domain `send.alonsovndev.com`).
+- **Live:** the stack runs in the AWS account that holds the Free Plan credits, region `us-east-2`. API `v0.2.0` was deployed with `scripts/deploy-release.sh` and answers at `https://api-oph.alonsovndev.com`; the web app `v0.3.0` is published by Cloudflare Builds at `https://oph.alonsovndev.com`. Sign-up from the web app works end to end (email through Resend, sending domain `send.alonsovndev.com`).
 - **Not done:** the admin user is not seeded (not needed: self-registration works). Seeding is an optional step in the API repository.
 
 ## Layout
